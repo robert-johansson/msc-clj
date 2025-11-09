@@ -20,7 +20,7 @@
                       op-right-id [:op op-right-id]})
 (def implication-left [[:seq term-a1-left (operation-terms op-left-id)]
                        goal-term op-left-id])
-(def implication-right [[:seq term-a2-left (operation-terms op-right-id)]
+(def implication-right [[:seq term-a1-right (operation-terms op-right-id)]
                         goal-term op-right-id])
 (def default-truth {:f 0.5 :c 0.0})
 (def default-config {:motor-babble 0.2
@@ -35,12 +35,31 @@
                                     op-right-id {:term (operation-terms op-right-id)}}
                               :params {:motor-babble (:motor-babble cfg)}})
       :h-rng (java.util.Random. 1337)
-      :config cfg})))
+      :config cfg
+      :stats {:decisions 0 :forced 0}
+      :trace? (:trace? cfg)
+      :trace []})))
+
+(defn- record-trace [ctx inputs]
+  (if-not (:trace? ctx)
+    ctx
+    (let [time (dec (get-in ctx [:engine :time]))
+          entries (concat
+                   (map (fn [b] {:time time :kind :belief :term (:term b)}) (:beliefs inputs))
+                   (map (fn [g] {:time time :kind :goal :term (:term g)}) (:goals inputs)))]
+      (update ctx :trace into entries))))
 
 (defn- run-step*
   [ctx inputs]
-  (let [[engine' effects _] (engine/step (:engine ctx) inputs)]
-    [(assoc ctx :engine engine') effects]))
+  (let [[engine' effects _] (engine/step (:engine ctx) inputs)
+        ctx' (assoc ctx :engine engine')]
+    [(record-trace ctx' inputs) effects]))
+
+(defn- clear-active-terms [ctx]
+  (update ctx :engine dissoc :active-terms))
+
+(defn- add-active-term [ctx term]
+  (update ctx :engine #(update % :active-terms (fnil conj #{}) term)))
 
 (defn- advance-cycles
   [ctx n]
@@ -72,7 +91,8 @@
 
 (defn- inject-belief
   [ctx belief]
-  (first (run-step* ctx {:beliefs [belief]})))
+  (let [[ctx' _] (run-step* ctx {:beliefs [belief]})]
+    (add-active-term ctx' (:term belief))))
 
 (defn- inject-beliefs
   [ctx beliefs]
@@ -81,10 +101,10 @@
 (defn- stimuli-events
   [a1-left?]
   (if a1-left?
-    [{:term term-a1-left}
-     {:term term-a2-right}]
-    [{:term term-a2-left}
-     {:term term-a1-right}]))
+    [{:term term-a2-right :procedural? false}
+     {:term term-a1-left :procedural? true}]
+    [{:term term-a2-left :procedural? false}
+     {:term term-a1-right :procedural? true}]))
 
 (defn- truth-or-default
   [engine key]
@@ -102,13 +122,16 @@
                        :op-id op-id})
    op-id])
 
+(defn- increment-stat [ctx k]
+  (update-in ctx [:stats k] (fnil inc 0)))
+
 (defn- attempt-decision
   [ctx]
   (loop [state ctx
          attempts max-extra-attempts]
     (let [[state' op] (wait-for-decision state max-wait-cycles)]
       (if op
-        [state' op]
+        [(increment-stat state' :decisions) op]
         (if (zero? attempts)
           [state' nil]
           (recur (issue-goal state') (dec attempts)))))))
@@ -129,13 +152,17 @@
 (defn run-trial
   [ctx {:keys [phase block trial a1-left? provide-feedback?]}]
   (let [expected (if a1-left? op-left-id op-right-id)
-        ctx (inject-beliefs ctx (stimuli-events a1-left?))
+        ctx (-> ctx
+                clear-active-terms
+                (inject-beliefs (stimuli-events a1-left?)))
         ctx (issue-goal ctx)
         [ctx decision] (attempt-decision ctx)
         [ctx decision] (if decision
                          [ctx decision]
-                         (let [forced (random-op ctx)]
-                           (force-operation ctx forced)))
+                         (let [forced (random-op ctx)
+                               [ctx' op] (force-operation (increment-stat ctx :forced) forced)]
+                           [ctx' op]))
+        ctx (clear-active-terms ctx)
         success? (= decision expected)
         ctx (if provide-feedback?
               (deliver-feedback ctx success?)
@@ -242,3 +269,14 @@
         lines (cons csv-header rows)]
     (spit path
           (str/join "\n" (map #(str/join "," %) lines)))))
+
+(defn tracked-truths
+  "Return the truth values of the two key procedural implications from a context."
+  [{:keys [engine]}]
+  (let [imps (:implications engine)]
+    {:left (get-in imps [implication-left :truth])
+     :right (get-in imps [implication-right :truth])}))
+
+(defn context-stats
+  [{:keys [stats]}]
+  stats)

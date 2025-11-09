@@ -89,11 +89,14 @@
       (is (> (:f last-truth) 0.9)))))
 
 (deftest experiment-one-scenario-runs
-  (let [{:keys [results]} (exp1/run-exp1-context)
+  (let [{:keys [context results]} (exp1/run-exp1-context)
+        {:keys [testing]} (exp1/summarize-results results)
+        {:keys [left right]} (exp1/tracked-truths context)
         total-trials (* exp1/exp-block-trials
                         (+ exp1/exp1-baseline-blocks
                            exp1/exp1-training-blocks
                            exp1/exp1-testing-blocks))]
     (is (= total-trials (count results)))
-    (is (seq (filter #(= :training (:phase %)) results)))
-    (is (seq (filter #(= :testing (:phase %)) results)))))
+    (is left)
+    (is right)
+    (is (> (:accuracy testing) 0.7))))

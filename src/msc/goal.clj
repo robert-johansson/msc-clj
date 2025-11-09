@@ -17,11 +17,17 @@
       ante)))
 
 (defn- belief-available? [engine term]
-  (let [max-age (get-in engine [:params :decision-max-age] 1)
+  (let [active (get engine :active-terms)
+        recent-terms (into #{}
+                           (map :term (get-in engine [:ingested :belief])))
+        max-age (get-in engine [:params :decision-max-age] 1)
         belief (last (get-in engine [:concepts term :belief-spikes]))]
-    (when belief
-      (<= (- (:time engine) (:time belief))
-          (max 0 max-age)))))
+    (cond
+      (and active (contains? active term)) true
+      (contains? recent-terms term) true
+      belief (<= (- (:time engine) (:time belief))
+                 (max 0 max-age))
+      :else false)))
 
 (defn- spawn-subgoal [engine target link]
   (let [depth (inc (or (:depth target) 0))

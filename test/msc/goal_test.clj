@@ -44,6 +44,7 @@
                                             :dt 1})
                 (event/add-event :belief {:term [:pre]})
                 (assoc :time 12)
+                (assoc-in [:ingested :belief] [])
                 (event/add-event :goal {:term [:g]}))
         [eng-no effects-no _] (goal/decide eng rng)
         _ (is (empty? effects-no))
