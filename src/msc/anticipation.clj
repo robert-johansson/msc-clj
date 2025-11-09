@@ -1,9 +1,16 @@
 (ns msc.anticipation
   "Tracks anticipated implications for assumption-of-failure updates.")
 
+(defn- ante-matches? [ante term]
+  (cond
+    (and (vector? ante) (= :seq (first ante)) (>= (count ante) 3))
+    (= (second ante) term)
+    :else
+    (= ante term)))
+
 (defn- matching-links [engine event threshold]
   (->> (vals (:implications engine))
-       (filter #(and (= (:ante %) (:term event))
+       (filter #(and (ante-matches? (:ante %) (:term event))
                      (>= (:expectation %) threshold)))))
 
 (defn- add-anticipations [engine matches stamp]

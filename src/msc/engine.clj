@@ -36,6 +36,7 @@
       :concepts {}
       :implications {}
       :anticipations []
+      :pending-feedback []
       :next-stamp-id 0
       :ops (or ops {})})))
 
@@ -51,18 +52,34 @@
       (infer/assumption-of-failure engine' anticipated eps)
       engine')))
 
+(defn- feedback->event [effect]
+  {:term (:term effect)
+   :truth {:f 1.0 :c 0.9}
+   :op-id (:op-id effect)
+   :kind :belief})
+
+(defn- merge-feedback [engine inputs]
+  (let [feedbacks (map feedback->event (:pending-feedback engine))
+        beliefs (vec (concat feedbacks (or (:beliefs inputs) [])))
+        goals (vec (or (:goals inputs) []))]
+    [(assoc engine :pending-feedback [])
+     {:beliefs beliefs
+      :goals goals}]))
+
 (defn step
   "Placeholder for the full MSC cycle. Accepts the engine, inputs map
    {:beliefs [] :goals []}, and an RNG instance. Returns [engine' effects rng']."
   ([engine inputs] (step engine inputs (:rng engine)))
   ([engine inputs rng]
    ;; Subsequent commits will replace this stub with the full pipeline.
-    (let [engine (event/ingest engine inputs)
+   (let [[engine inputs] (merge-feedback engine inputs)
+         engine (event/ingest engine inputs)
          engine (anticipation/activate engine (get-in engine [:ingested :belief]))
          engine (apply-assumptions engine)
          engine (mining/run engine)
          engine (goal/propagate engine)
          [engine effects rng'] (goal/decide engine rng)
+         engine (assoc engine :pending-feedback effects)
          engine' (-> engine
                      (assoc :rng rng')
                      (update :time inc))]

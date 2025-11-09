@@ -11,7 +11,8 @@
     msc.goal-test
     msc.event-test
     msc.mining-test
-    msc.infer-test])
+    msc.infer-test
+    msc.acceptance-test])
 
 (defn -main
   "Run clojure.test over the requested namespaces. Accepts optional namespace symbols
