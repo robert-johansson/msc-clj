@@ -29,6 +29,11 @@
                  (max 0 max-age))
       :else false)))
 
+(defn- log-decision [engine entry]
+  (if (contains? engine :decision-trace)
+    (update engine :decision-trace (fnil conj []) entry)
+    engine))
+
 (defn- spawn-subgoal [engine target link]
   (let [depth (inc (or (:depth target) 0))
         term (:ante link)
@@ -74,7 +79,10 @@
    `decision-th`. Falls back to motor babbling when no rule applies."
   [engine rng]
   (let [decision-th (get-in engine [:params :decision-th] 0.501)
-        goals (get-in engine [:fifo :goal :items])
+        goals (let [ingested (get-in engine [:ingested :goal])]
+                (if (seq ingested)
+                  ingested
+                  (get-in engine [:fifo :goal :items])))
         candidates (for [goal goals
                          link (candidate-links engine (:term goal) decision-th)
                          :let [op-id (:op-id link)
@@ -86,26 +94,30 @@
                       :desire (:expectation link)})
         best (when (seq candidates)
                (apply max-key :desire candidates))]
-    (if (and best (>= (:desire best) decision-th))
-      (let [op-id (:op-id best)
-            term (or (get-in engine [:ops op-id :term])
-                     [:op op-id])
-            effect {:type :operation
-                    :op-id op-id
-                    :term term
-                    :time (:time engine)}]
-        [engine [effect] rng])
-      (let [motor (get-in engine [:params :motor-babble] 0.0)
-            roll (.nextDouble rng)]
-        (if (and (< roll motor) (seq (:ops engine)))
-          (let [ops (vec (keys (:ops engine)))
-                idx (.nextInt rng (count ops))
-                op-id (ops idx)
-                term (or (get-in engine [:ops op-id :term])
-                         [:op op-id])
-                effect {:type :operation
-                        :op-id op-id
-                        :term term
-                        :time (:time engine)}]
-            [engine [effect] rng])
-          [engine [] rng])))))
+    (let [engine (log-decision engine {:time (:time engine)
+                                       :goal (:term (first goals))
+                                       :candidates (map #(select-keys % [:op-id :desire :goal]) candidates)
+                                       :best (:op-id best)})]
+      (if (and best (>= (:desire best) decision-th))
+        (let [op-id (:op-id best)
+              term (or (get-in engine [:ops op-id :term])
+                       [:op op-id])
+              effect {:type :operation
+                      :op-id op-id
+                      :term term
+                      :time (:time engine)}]
+          [engine [effect] rng])
+        (let [motor (get-in engine [:params :motor-babble] 0.0)
+              roll (.nextDouble rng)]
+          (if (and (< roll motor) (seq (:ops engine)))
+            (let [ops (vec (keys (:ops engine)))
+                  idx (.nextInt rng (count ops))
+                  op-id (ops idx)
+                  term (or (get-in engine [:ops op-id :term])
+                           [:op op-id])
+                  effect {:type :operation
+                          :op-id op-id
+                          :term term
+                          :time (:time engine)}]
+              [engine [effect] rng])
+            [engine [] rng]))))))

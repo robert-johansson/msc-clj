@@ -13,7 +13,7 @@
                                          :provide-feedback? false})
         trace (:trace ctx')]
     (is (>= (count trace) 2))
-    (is (= [:exp1 :A2-right] (:term (first trace))))
+    (is (= [:exp1 :A2-left] (:term (first trace))))
     (is (= [:exp1 :A1-left] (:term (second trace))))
     (is (= 0 (:time (first trace))))
     (is (= 1 (:time (second trace))))))

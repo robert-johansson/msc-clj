@@ -35,3 +35,25 @@
       (is record)
       (is (= [:seq [:A] [:op 1]] (:ante record)))
       (is (= 1 (:op-id record))))))
+
+(defn- inject-seq [engine events]
+  (reduce
+   (fn [eng {:keys [term op-id truth]}]
+     (-> eng
+         (event/add-event :belief {:term term
+                                   :op-id op-id
+                                   :truth truth})
+         (update :time inc)))
+   engine
+   events))
+
+(deftest induction-uses-consequent-truth
+  (let [eng (-> (engine/create {})
+                (assoc :time 0)
+                (inject-seq [{:term [:A]}
+                             {:term [:op 1] :op-id 1}
+                             {:term [:G] :truth {:f 0.0 :c 0.9}}]))
+        eng' (mining/run eng)
+        w (get-in eng' [:implications [[:seq [:A] [:op 1]] [:G] 1] :w])]
+    (is (= 0.0 (first w)))
+    (is (> (second w) 8.9))))

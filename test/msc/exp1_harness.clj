@@ -13,8 +13,8 @@
 (def inter-trial-gap 100)
 (def goal-term [:exp1 :goal])
 (def term-a1-left [:exp1 :A1-left])
-(def term-a1-right [:exp1 :A1-right])
 (def term-a2-left [:exp1 :A2-left])
+(def term-a1-right [:exp1 :A1-right])
 (def term-a2-right [:exp1 :A2-right])
 (def operation-terms {op-left-id [:op op-left-id]
                       op-right-id [:op op-right-id]})
@@ -31,10 +31,14 @@
   ([]
    (initial-context default-config))
   ([config]
-   (let [cfg (merge default-config config)]
-     {:engine (engine/create {:ops {op-left-id {:term (operation-terms op-left-id)}
-                                    op-right-id {:term (operation-terms op-right-id)}}
-                              :params {:motor-babble (:motor-babble cfg)}})
+   (let [cfg (merge default-config config)
+         engine (engine/create {:ops {op-left-id {:term (operation-terms op-left-id)}
+                                      op-right-id {:term (operation-terms op-right-id)}}
+                                :params {:motor-babble (:motor-babble cfg)}})
+         engine (if (:decision-trace? cfg)
+                  (assoc engine :decision-trace [])
+                  engine)]
+     {:engine engine
       :h-rng (java.util.Random. 1337)
       :config cfg
       :stats {:decisions 0 :forced 0}
@@ -105,9 +109,9 @@
 (defn- stimuli-events
   [a1-left?]
   (if a1-left?
-    [{:term term-a2-right :procedural? false}
-     {:term term-a1-left :procedural? true}]
     [{:term term-a2-left :procedural? false}
+     {:term term-a1-left :procedural? true}]
+    [{:term term-a2-right :procedural? false}
      {:term term-a1-right :procedural? true}]))
 
 (defn- truth-or-default
@@ -136,9 +140,11 @@
     (let [[state' op] (wait-for-decision state max-wait-cycles)]
       (if op
         [(increment-stat state' :decisions) op]
-        (if (zero? attempts)
-          [state' nil]
-          (recur (issue-goal state') (dec attempts)))))))
+        (let [state'' (increment-stat state' :forced)
+              forced (random-op state'')]
+          (if (zero? attempts)
+            (force-operation state'' forced)
+            (recur (issue-goal state'') (dec attempts))))))))
 
 (defn- deliver-feedback
   [ctx success?]
@@ -283,3 +289,5 @@
 (defn context-stats
   [{:keys [stats]}]
   stats)
+(defn decision-trace [context]
+  (get-in context [:engine :decision-trace]))
