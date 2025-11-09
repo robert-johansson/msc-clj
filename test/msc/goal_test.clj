@@ -31,6 +31,26 @@
         [_ effects _] (goal/decide eng rng)]
     (is (= 1 (:op-id (first effects))))))
 
+(deftest decision-requires-recent-belief
+  (let [rng (java.util.SplittableRandom. 42)
+        eng (-> (engine/create {:params {:decision-max-age 0}
+                                :ops {1 {:term [:op 1]}}})
+                (assoc :time 10)
+                (memory/upsert-implication {:ante [:seq [:pre] [:op 1]]
+                                            :cons [:g]
+                                            :op-id 1
+                                            :delta-w [3.0 0.0]
+                                            :stamps #{1}
+                                            :dt 1})
+                (event/add-event :belief {:term [:pre]})
+                (assoc :time 12)
+                (event/add-event :goal {:term [:g]}))
+        [eng-no effects-no _] (goal/decide eng rng)
+        _ (is (empty? effects-no))
+        eng' (event/add-event eng-no :belief {:term [:pre]})
+        [_ effects _] (goal/decide eng' rng)]
+    (is (= 1 (:op-id (first effects))))))
+
 (defn- engine-with-link []
   (memory/upsert-implication
    (engine/create {})
@@ -49,6 +69,17 @@
           goals (map :term (get-in eng' [:fifo :goal :items]))]
       (is (some #{[:a]} goals))
       (is (= 1 (->> goals (filter #{[:a]}) count))))))
+
+(deftest propagate-merges-truth
+  (let [eng (-> (engine-with-link)
+                (event/add-event :goal {:term [:g] :truth {:f 0.6 :c 0.4}}))
+        eng1 (goal/propagate eng)
+        first-truth (-> eng1 (get-in [:concepts [:a] :goal-spikes]) last :truth)
+        eng2 (event/add-event eng1 :goal {:term [:g] :truth {:f 1.0 :c 0.6}})
+        eng3 (goal/propagate eng2)
+        merged-truth (-> eng3 (get-in [:concepts [:a] :goal-spikes]) last :truth)]
+    (is (> (:c merged-truth) (:c first-truth)))
+    (is (> (:f merged-truth) (:f first-truth)))))
 
 (deftest propagate-respects-depth-limit
   (let [eng (-> (engine/create {:params {:prop-iters 1}})

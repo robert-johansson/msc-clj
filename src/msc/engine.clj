@@ -16,6 +16,7 @@
    :table-size    20
    :fifo-cap      20
    :spike-limit   5
+   :decision-max-age 1
    :motor-babble  0.2})
 
 (defn create

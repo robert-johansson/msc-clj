@@ -1,6 +1,7 @@
 (ns msc.goal
   "Goal propagation and decision scaffolding."
-  (:require [msc.event :as event]))
+  (:require [msc.event :as event]
+            [msc.truth :as truth]))
 
 (defn- candidate-links [engine term threshold]
   (->> (vals (:implications engine))
@@ -16,12 +17,22 @@
       ante)))
 
 (defn- belief-available? [engine term]
-  (some? (last (get-in engine [:concepts term :belief-spikes]))))
+  (let [max-age (get-in engine [:params :decision-max-age] 1)
+        belief (last (get-in engine [:concepts term :belief-spikes]))]
+    (when belief
+      (<= (- (:time engine) (:time belief))
+          (max 0 max-age)))))
 
 (defn- spawn-subgoal [engine target link]
   (let [depth (inc (or (:depth target) 0))
-        subgoal {:term (:ante link)
-                 :truth (:truth target)
+        term (:ante link)
+        base-truth (:truth target)
+        existing-truth (some-> (get-in engine [:concepts term :goal-spikes]) last :truth)
+        merged-truth (if existing-truth
+                       (truth/revise-fc existing-truth base-truth)
+                       base-truth)
+        subgoal {:term term
+                 :truth merged-truth
                  :depth depth
                  :kind :goal
                  :time (:time engine)}]
@@ -73,7 +84,8 @@
       (let [op-id (:op-id best)
             term (or (get-in engine [:ops op-id :term])
                      [:op op-id])
-            effect {:op-id op-id
+            effect {:type :operation
+                    :op-id op-id
                     :term term
                     :time (:time engine)}]
         [engine [effect] rng])
@@ -85,7 +97,8 @@
                 op-id (ops idx)
                 term (or (get-in engine [:ops op-id :term])
                          [:op op-id])
-                effect {:op-id op-id
+                effect {:type :operation
+                        :op-id op-id
                         :term term
                         :time (:time engine)}]
             [engine [effect] rng])
