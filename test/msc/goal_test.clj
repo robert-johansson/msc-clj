@@ -52,6 +52,28 @@
         [_ effects _] (goal/decide eng rng)]
     (is (= 2 (:op-id (first effects))))))
 
+(deftest decision-uses-active-terms-when-belief-aged-out
+  (let [rng (java.util.SplittableRandom. 99)
+        eng (-> (engine/create {:ops {1 {:term [:op 1]}
+                                      2 {:term [:op 2]}}})
+                (memory/upsert-implication {:ante [:seq [:a] [:op 1]]
+                                            :cons [:g]
+                                            :op-id 1
+                                            :delta-w [10.0 0.0]
+                                            :stamps #{1}
+                                            :dt 1})
+                (memory/upsert-implication {:ante [:seq [:b] [:op 2]]
+                                            :cons [:g]
+                                            :op-id 2
+                                            :delta-w [2.0 0.0]
+                                            :stamps #{2}
+                                            :dt 1})
+                (assoc :active-terms #{[:b]})
+                (assoc-in [:ingested :belief] [])
+                (event/add-event :goal {:term [:g]}))
+        [_ effects _] (goal/decide eng rng)]
+    (is (= 2 (:op-id (first effects))))))
+
 (deftest decision-requires-recent-belief
   (let [rng (java.util.SplittableRandom. 42)
         eng (-> (engine/create {:params {:decision-max-age 0}

@@ -27,3 +27,16 @@
           revised (truth/fc->w result)]
       (is (< (first base) (first revised)))
       (is (<= (second base) (second revised))))))
+
+(deftest projection-decays-confidence
+  (testing "projection uses exponential decay"
+    (let [res (truth/project {:f 1.0 :c 0.9} 2)
+          expected (* 0.9 (Math/pow 0.8 2))]
+      (is (<= (Math/abs (- (:c res) expected)) 1e-9)))))
+
+(deftest induction-aligns-with-c-reference
+  (testing "induction defaults match MSC behavior"
+    (let [truth (truth/induction {:f 1.0 :c 0.9}
+                                 {:f 1.0 :c 0.9})]
+      (is (<= (Math/abs (- (:c truth) 0.309)) 1e-3))
+      (is (= 1.0 (:f truth))))))

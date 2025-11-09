@@ -56,4 +56,4 @@
         eng' (mining/run eng)
         w (get-in eng' [:implications [[:seq [:A] [:op 1]] [:G] 1] :w])]
     (is (= 0.0 (first w)))
-    (is (> (second w) 8.9))))
+    (is (> (second w) 0.3))))

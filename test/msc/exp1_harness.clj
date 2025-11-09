@@ -1,6 +1,7 @@
 (ns msc.exp1-harness
   (:require [clojure.string :as str]
-            [msc.engine :as engine]))
+            [msc.engine :as engine]
+            [msc.truth :as truth]))
 
 (def op-left-id 1)
 (def op-right-id 2)
@@ -13,8 +14,8 @@
 (def inter-trial-gap 100)
 (def goal-term [:exp1 :goal])
 (def term-a1-left [:exp1 :A1-left])
-(def term-a2-left [:exp1 :A2-left])
 (def term-a1-right [:exp1 :A1-right])
+(def term-a2-left [:exp1 :A2-left])
 (def term-a2-right [:exp1 :A2-right])
 (def operation-terms {op-left-id [:op op-left-id]
                       op-right-id [:op op-right-id]})
@@ -22,6 +23,10 @@
                        goal-term op-left-id])
 (def implication-right [[:seq term-a1-right (operation-terms op-right-id)]
                         goal-term op-right-id])
+(def implication-a2-left [[:seq term-a2-left (operation-terms op-left-id)]
+                          goal-term op-left-id])
+(def implication-a2-right [[:seq term-a2-right (operation-terms op-right-id)]
+                           goal-term op-right-id])
 (def default-truth {:f 0.5 :c 0.0})
 (def default-config {:motor-babble 0.2
                      :negative-c 0.9
@@ -109,14 +114,20 @@
 (defn- stimuli-events
   [a1-left?]
   (if a1-left?
-    [{:term term-a2-left :procedural? false}
-     {:term term-a1-left :procedural? true}]
-    [{:term term-a2-right :procedural? false}
-     {:term term-a1-right :procedural? true}]))
+    [{:term term-a1-left :procedural? true}
+     {:term term-a2-right :procedural? false}]
+    [{:term term-a1-right :procedural? true}
+     {:term term-a2-left :procedural? false}]))
 
 (defn- truth-or-default
   [engine key]
   (get-in engine [:implications key :truth] default-truth))
+
+(defn- expectation-value
+  [truth]
+  (if (= truth default-truth)
+    0.0
+    (truth/expectation truth)))
 
 (defn- random-op
   [ctx]
@@ -156,8 +167,10 @@
 
 (defn- measurement
   [engine]
-  {:exp-left (truth-or-default engine implication-left)
-   :exp-right (truth-or-default engine implication-right)})
+  {:exp-a1-left (truth-or-default engine implication-left)
+   :exp-a1-right (truth-or-default engine implication-right)
+   :exp-a2-left (truth-or-default engine implication-a2-left)
+   :exp-a2-right (truth-or-default engine implication-a2-right)})
 
 (defn run-trial
   [ctx {:keys [phase block trial a1-left? provide-feedback?]}]
@@ -250,26 +263,31 @@
                    (/ (count (filter :correct? testing))
                       (double (count testing)))
                    0.0)]
-    {:training {:final-left (:exp-left final-training)
-                :final-right (:exp-right final-training)}
+    {:training {:final-a1-left (:exp-a1-left final-training)
+                :final-a1-right (:exp-a1-right final-training)
+                :final-a2-left (:exp-a2-left final-training)
+                :final-a2-right (:exp-a2-right final-training)}
      :testing {:accuracy accuracy}}))
 
 (def csv-header
   ["phase" "block" "trial" "a1_left" "chosen_op" "correct"
-   "exp_left_f" "exp_left_c" "exp_right_f" "exp_right_c"])
+   "exp_a1_left" "exp_a1_right" "exp_a2_left" "exp_a2_right"])
 
 (defn format-row
-  [{:keys [phase block trial a1-left? chosen-op correct? exp-left exp-right]}]
-  [(name phase)
-   (str block)
-   (str trial)
-   (if a1-left? "1" "0")
-   (str (or chosen-op 0))
-   (if correct? "1" "0")
-   (format "%.6f" (:f exp-left))
-   (format "%.6f" (:c exp-left))
-   (format "%.6f" (:f exp-right))
-   (format "%.6f" (:c exp-right))])
+  [{:keys [phase block trial a1-left? chosen-op correct?
+           exp-a1-left exp-a1-right exp-a2-left exp-a2-right]}]
+  (let [format-exp (fn [truth]
+                     (format "%.6f" (expectation-value truth)))]
+    [(name phase)
+     (str block)
+     (str trial)
+     (if a1-left? "1" "0")
+     (str (or chosen-op 0))
+     (if correct? "1" "0")
+     (format-exp exp-a1-left)
+     (format-exp exp-a1-right)
+     (format-exp exp-a2-left)
+     (format-exp exp-a2-right)]))
 
 (defn export-csv!
   [path]
@@ -282,9 +300,14 @@
 (defn tracked-truths
   "Return the truth values of the two key procedural implications from a context."
   [{:keys [engine]}]
-  (let [imps (:implications engine)]
-    {:left (get-in imps [implication-left :truth])
-     :right (get-in imps [implication-right :truth])}))
+  (let [imps (:implications engine)
+        lookup (fn [key]
+                 (or (get-in imps [key :truth])
+                     default-truth))]
+    {:a1-left (lookup implication-left)
+     :a1-right (lookup implication-right)
+     :a2-left (lookup implication-a2-left)
+     :a2-right (lookup implication-a2-right)}))
 
 (defn context-stats
   [{:keys [stats]}]

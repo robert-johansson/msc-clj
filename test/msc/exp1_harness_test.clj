@@ -13,13 +13,22 @@
                                          :provide-feedback? false})
         trace (:trace ctx')]
     (is (>= (count trace) 2))
-    (is (= [:exp1 :A2-left] (:term (first trace))))
-    (is (= [:exp1 :A1-left] (:term (second trace))))
+    (is (= [:exp1 :A1-left] (:term (first trace))))
+    (is (= [:exp1 :A2-right] (:term (second trace))))
     (is (= 0 (:time (first trace))))
     (is (= 1 (:time (second trace))))))
 
 (deftest tracked-truths-exist-after-run
   (let [{:keys [context]} (harness/run-exp1-context {:motor-babble 0.0})
-        {:keys [left right]} (harness/tracked-truths context)]
-    (is left)
-    (is right)))
+        truths (harness/tracked-truths context)]
+    (doseq [k [:a1-left :a1-right :a2-left :a2-right]]
+      (is (contains? truths k))
+      (is (map? (get truths k))))))
+
+(deftest decision-trace-collects-entries
+  (let [{:keys [context]} (harness/run-exp1-context {:motor-babble 0.0
+                                                     :decision-trace? true})
+        trace (harness/decision-trace context)]
+    (is (seq trace))
+    (is (every? #(contains? % :time) trace))
+    (is (every? #(contains? % :best) trace))))

@@ -2,6 +2,8 @@
   "Truth calculus helpers for MSC. All functions are pure and never mutate inputs.")
 
 (def ^:private default-truth {:f 0.5 :c 0.0})
+(def ^:private evidential-horizon 1.0)
+(def ^:private projection-decay 0.8)
 
 (defn fc->w
   "Convert {:f f :c c} into evidence counts [w+ w-]. When confidence is zero,
@@ -28,7 +30,18 @@
     (if (<= sum 0.0)
       default-truth
       {:f (/ w+ sum)
-       :c (/ sum (inc sum))})))
+       :c (/ sum (+ sum evidential-horizon))})))
+
+(defn- w->c [w]
+  (if (<= w 0.0)
+    0.0
+    (/ w (+ w evidential-horizon))))
+
+(defn- c->w [c]
+  (if (<= c 0.0)
+    0.0
+    (/ (* evidential-horizon c)
+       (- 1.0 c))))
 
 (defn expectation
   "Return MSC expectation for a truth map {:f f :c c}. Frequency defaults to 0.5,
@@ -51,3 +64,28 @@
   [truth delta]
   (-> (revise-w (fc->w truth) (fc->w delta))
       (w->fc)))
+
+(defn project
+  "Project confidence across `dt` cycles using MSC's exponential decay."
+  [truth dt]
+  (let [c (double (or (:c truth) (:c default-truth)))
+        diff (Math/abs (double (or dt 0)))
+        factor (Math/pow projection-decay diff)]
+    (assoc truth :c (* c factor))))
+
+(defn eternalize
+  "Apply MSC Truth_Eternalize to shrink confidence."
+  [truth]
+  (let [c (double (or (:c truth) (:c default-truth)))]
+    (assoc truth :c (w->c c))))
+
+(defn induction
+  "MSC Truth_Induction followed by Truth_Eternalize."
+  [ante-truth cons-truth]
+  (let [f1 (double (or (:f cons-truth) (:f default-truth)))
+        f2 (double (or (:f ante-truth) (:f default-truth)))
+        c1 (double (or (:c cons-truth) (:c default-truth)))
+        c2 (double (or (:c ante-truth) (:c default-truth)))
+        w (* f2 c1 c2)
+        c (w->c w)]
+    (eternalize {:f f1 :c c})))

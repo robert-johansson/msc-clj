@@ -10,11 +10,11 @@
 (defn- new-beliefs [engine]
   (get-in engine [:ingested :belief]))
 
-(defn- delta-w [event]
-  (let [truth (:truth event)]
-    (if truth
-      (truth/fc->w truth)
-      [1.0 0.0])))
+(defn- delta-w [ante cons]
+  (let [dt (- (:time cons) (:time ante))
+        ante-truth (truth/project (:truth ante) dt)]
+    (-> (truth/induction ante-truth (:truth cons))
+        (truth/fc->w))))
 
 (defn- temporal-candidates [history cons-event]
   (filter #(and (nil? (:op-id %))
@@ -33,7 +33,7 @@
                           {:ante (:term ante)
                            :cons (:term cons)
                            :op-id nil
-                           :delta-w (delta-w cons)
+                           :delta-w (delta-w ante cons)
                            :stamps (stamp/union #{(:stamp ante)} #{(:stamp cons)})
                            :dt (- (:time cons) (:time ante))}))
           eng
@@ -70,7 +70,7 @@
                              {:ante [:seq (:term ante) (:term op-event)]
                               :cons (:term cons)
                               :op-id (:op-id op-event)
-                              :delta-w (delta-w cons)
+                              :delta-w (delta-w ante cons)
                               :stamps (stamp/union #{(:stamp ante)}
                                                    #{(:stamp op-event)}
                                                    #{(:stamp cons)})
