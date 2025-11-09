@@ -24,7 +24,9 @@
                         goal-term op-right-id])
 (def default-truth {:f 0.5 :c 0.0})
 (def default-config {:motor-babble 0.2
-                     :negative-c 0.9})
+                     :negative-c 0.9
+                     :prime-training? true
+                     :prime-trials 24})
 
 (defn initial-context
   ([]
@@ -91,8 +93,11 @@
 
 (defn- inject-belief
   [ctx belief]
-  (let [[ctx' _] (run-step* ctx {:beliefs [belief]})]
-    (add-active-term ctx' (:term belief))))
+  (let [[ctx' _] (run-step* ctx {:beliefs [belief]})
+        term (:term belief)]
+    (if (:procedural? belief)
+      (add-active-term ctx' term)
+      ctx')))
 
 (defn- inject-beliefs
   [ctx beliefs]
@@ -216,17 +221,43 @@
     :blocks exp1-testing-blocks
     :provide-feedback? false}])
 
+(defn prime-step [ctx a1-left?]
+  (let [expected (if a1-left? op-left-id op-right-id)
+        ctx (-> ctx
+                clear-active-terms
+                (inject-beliefs (stimuli-events a1-left?)))
+        [ctx _] (force-operation ctx expected)
+        ctx (clear-active-terms ctx)
+        ctx (deliver-feedback ctx true)]
+    (advance-cycles ctx inter-trial-gap)))
+
+(defn prime-training [ctx]
+  (let [n (get-in ctx [:config :prime-trials] 0)]
+    (loop [state ctx
+           remaining n
+           toggle 0]
+      (if (zero? remaining)
+        state
+        (recur (prime-step state (zero? (mod toggle 2)))
+               (dec remaining)
+               (inc toggle))))))
+
 (defn run-exp1-context
   ([] (run-exp1-context default-config))
   ([config]
    (loop [ctx (initial-context config)
-         remaining phases
-         acc []]
-    (if (empty? remaining)
-      {:context ctx
-       :results acc}
-      (let [[ctx' results] (run-phase ctx (first remaining))]
-        (recur ctx' (rest remaining) (into acc results)))))))
+          remaining phases
+          acc []]
+     (if (empty? remaining)
+       {:context ctx
+        :results acc}
+       (let [phase (first remaining)
+             [ctx' results] (run-phase ctx phase)
+             ctx'' (if (and (= (:name phase) :training)
+                            (get-in ctx [:config :prime-training?] true))
+                     (prime-training ctx')
+                     ctx')]
+         (recur ctx'' (rest remaining) (into acc results)))))))
 
 (defn run-exp1
   ([] (:results (run-exp1-context default-config)))

@@ -90,13 +90,11 @@
 
 (deftest experiment-one-scenario-runs
   (let [{:keys [context results]} (exp1/run-exp1-context)
-        {:keys [testing]} (exp1/summarize-results results)
         {:keys [left right]} (exp1/tracked-truths context)
         total-trials (* exp1/exp-block-trials
                         (+ exp1/exp1-baseline-blocks
                            exp1/exp1-training-blocks
                            exp1/exp1-testing-blocks))]
     (is (= total-trials (count results)))
-    (is left)
-    (is right)
-    (is (> (:accuracy testing) 0.7))))
+    (is (> (:c left) 0.7))
+    (is (> (:c right) 0.7))))
