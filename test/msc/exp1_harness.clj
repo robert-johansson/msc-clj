@@ -9,6 +9,11 @@
 (def exp1-baseline-blocks 3)
 (def exp1-training-blocks 3)
 (def exp1-testing-blocks 3)
+(def exp2-baseline-blocks 2)
+(def exp2-training1-blocks 4)
+(def exp2-testing1-blocks 2)
+(def exp2-training2-blocks 9)
+(def exp2-testing2-blocks 2)
 (def max-wait-cycles 64)
 (def max-extra-attempts 4)
 (def inter-trial-gap 100)
@@ -29,6 +34,14 @@
                           goal-term op-left-id])
 (def implication-a2-right [[:seq term-a2-right (operation-terms op-right-id)]
                            goal-term op-right-id])
+(def implication-a1-left-cross [[:seq term-a1-left (operation-terms op-right-id)]
+                                goal-term op-right-id])
+(def implication-a1-right-cross [[:seq term-a1-right (operation-terms op-left-id)]
+                                 goal-term op-left-id])
+(def implication-a2-left-cross [[:seq term-a2-left (operation-terms op-right-id)]
+                                goal-term op-right-id])
+(def implication-a2-right-cross [[:seq term-a2-right (operation-terms op-left-id)]
+                                 goal-term op-left-id])
 (def implication-a1-single [[:seq term-a1-single (operation-terms op-left-id)]
                             goal-term op-left-id])
 (def implication-a2-single [[:seq term-a2-single (operation-terms op-right-id)]
@@ -122,9 +135,9 @@
   [a1-left?]
   (if a1-left?
     [{:term term-a1-left :procedural? true}
-     {:term term-a2-right :procedural? false}]
+     {:term term-a2-right :procedural? true}]
     [{:term term-a1-right :procedural? true}
-     {:term term-a2-left :procedural? false}]))
+     {:term term-a2-left :procedural? true}]))
 (defn- single-stimulus [a1?]
   [(if a1?
      {:term term-a1-single :procedural? true}
@@ -181,7 +194,11 @@
   {:exp-a1-left (truth-or-default engine implication-left)
    :exp-a1-right (truth-or-default engine implication-right)
    :exp-a2-left (truth-or-default engine implication-a2-left)
-   :exp-a2-right (truth-or-default engine implication-a2-right)})
+   :exp-a2-right (truth-or-default engine implication-a2-right)
+   :exp-cross-a1-left (truth-or-default engine implication-a1-left-cross)
+   :exp-cross-a1-right (truth-or-default engine implication-a1-right-cross)
+   :exp-cross-a2-left (truth-or-default engine implication-a2-left-cross)
+   :exp-cross-a2-right (truth-or-default engine implication-a2-right-cross)})
 
 (defn- single-measurement [engine]
   {:single-a1 (get-in engine [:implications implication-a1-single :truth] zero-truth)
@@ -216,18 +233,22 @@
                 meas)]))
 
 (defn run-trial
-  [ctx {:keys [phase block trial a1-left? provide-feedback?]}]
-  (perform-trial ctx {:phase phase
-                      :block block
-                      :trial trial
-                      :meta {:a1-left? a1-left?}
-                      :stimuli (stimuli-events a1-left?)
-                      :expected-op (if a1-left? op-left-id op-right-id)
-                      :provide-feedback? provide-feedback?
-                      :measurement-fn measurement}))
+  [ctx {:keys [phase block trial a1-left? provide-feedback? expected-op]}]
+  (let [expected (or expected-op (if a1-left?
+                                   op-left-id
+                                   op-right-id))]
+    (perform-trial ctx {:phase phase
+                        :block block
+                        :trial trial
+                        :meta {:a1-left? a1-left?}
+                        :stimuli (stimuli-events a1-left?)
+                        :expected-op expected
+                        :provide-feedback? provide-feedback?
+                        :measurement-fn measurement})))
 
 (defn run-phase
-  [ctx {:keys [name blocks provide-feedback?] :as phase}]
+  [ctx {:keys [name blocks provide-feedback? use-a1-mapping?]
+        :or {use-a1-mapping? true}}]
   (loop [state ctx
          block 1
          toggle 0
@@ -242,11 +263,15 @@
               (if (> trial exp-block-trials)
                 [state' acc' toggle]
                 (let [a1-left? (zero? (mod toggle 2))
+                      expected (if use-a1-mapping?
+                                 (if a1-left? op-left-id op-right-id)
+                                 (if a1-left? op-right-id op-left-id))
                       [state'' result] (run-trial state'
                                                   {:phase name
                                                    :block block
                                                    :trial trial
                                                    :a1-left? a1-left?
+                                                   :expected-op expected
                                                    :provide-feedback? provide-feedback?})]
                   (recur state'' (inc trial) (inc toggle) (conj acc' result)))))]
         (let [[state-after block-data next-toggle] block-results]
@@ -300,6 +325,28 @@
     :blocks exp1-testing-blocks
     :provide-feedback? false}])
 
+(def exp2-phases
+  [{:name :baseline
+    :blocks exp2-baseline-blocks
+    :provide-feedback? false
+    :use-a1-mapping? true}
+   {:name :training1
+    :blocks exp2-training1-blocks
+    :provide-feedback? true
+    :use-a1-mapping? true}
+   {:name :testing1
+    :blocks exp2-testing1-blocks
+    :provide-feedback? false
+    :use-a1-mapping? true}
+   {:name :training2
+    :blocks exp2-training2-blocks
+    :provide-feedback? true
+    :use-a1-mapping? false}
+   {:name :testing2
+    :blocks exp2-testing2-blocks
+    :provide-feedback? false
+    :use-a1-mapping? false}])
+
 (defn run-exp1-context
   ([] (run-exp1-context default-config))
   ([config]
@@ -315,6 +362,22 @@
 (defn run-exp1
   ([] (:results (run-exp1-context default-config)))
   ([config] (:results (run-exp1-context config))))
+
+(defn run-exp2-context
+  ([] (run-exp2-context default-config))
+  ([config]
+   (loop [ctx (initial-context config)
+          remaining exp2-phases
+          acc []]
+     (if (empty? remaining)
+       {:context ctx
+        :results acc}
+       (let [[ctx' results] (run-phase ctx (first remaining))]
+         (recur ctx' (rest remaining) (into acc results)))))))
+
+(defn run-exp2
+  ([] (:results (run-exp2-context default-config)))
+  ([config] (:results (run-exp2-context config))))
 
 (defn run-exp09-context
   ([] (run-exp09-context default-config))
@@ -349,27 +412,47 @@
 
 (def csv-header
   ["phase" "block" "trial" "a1_left" "chosen_op" "correct"
-   "exp_a1_left" "exp_a1_right" "exp_a2_left" "exp_a2_right"])
+   "a1_left_f" "a1_left_c" "a1_right_f" "a1_right_c"
+   "a2_left_f" "a2_left_c" "a2_right_f" "a2_right_c"
+   "cross_a1_left_f" "cross_a1_left_c"
+   "cross_a1_right_f" "cross_a1_right_c"
+   "cross_a2_left_f" "cross_a2_left_c"
+   "cross_a2_right_f" "cross_a2_right_c"])
+
+(defn- truth->fc [truth]
+  [(format "%.6f" (:f truth))
+   (format "%.6f" (:c truth))])
 
 (defn format-row
   [{:keys [phase block trial a1-left? chosen-op correct?
-           exp-a1-left exp-a1-right exp-a2-left exp-a2-right]}]
-  (let [format-exp (fn [truth]
-                     (format "%.6f" (expectation-value truth)))]
-    [(name phase)
-     (str block)
-     (str trial)
-     (if a1-left? "1" "0")
-     (str (or chosen-op 0))
-     (if correct? "1" "0")
-     (format-exp exp-a1-left)
-     (format-exp exp-a1-right)
-     (format-exp exp-a2-left)
-     (format-exp exp-a2-right)]))
+           exp-a1-left exp-a1-right exp-a2-left exp-a2-right
+           exp-cross-a1-left exp-cross-a1-right exp-cross-a2-left exp-cross-a2-right]}]
+  (-> [(name phase)
+       (str block)
+       (str trial)
+       (if a1-left? "1" "0")
+       (str (or chosen-op 0))
+       (if correct? "1" "0")]
+      (into (truth->fc exp-a1-left))
+      (into (truth->fc exp-a1-right))
+      (into (truth->fc exp-a2-left))
+      (into (truth->fc exp-a2-right))
+      (into (truth->fc exp-cross-a1-left))
+      (into (truth->fc exp-cross-a1-right))
+      (into (truth->fc exp-cross-a2-left))
+      (into (truth->fc exp-cross-a2-right))))
 
 (defn export-csv!
   [path]
   (let [results (:results (run-exp1-context))
+        rows (map format-row results)
+        lines (cons csv-header rows)]
+    (spit path
+          (str/join "\n" (map #(str/join "," %) lines)))))
+
+(defn export-exp2-csv!
+  [path]
+  (let [results (:results (run-exp2-context))
         rows (map format-row results)
         lines (cons csv-header rows)]
     (spit path
@@ -386,8 +469,8 @@
 (defn format-exp09-row
   [{:keys [phase block trial stim chosen-op correct?
            single-a1 single-a2]}]
-  (let [[a1-f a1-c] (format-fc single-a1)
-        [a2-f a2-c] (format-fc single-a2)]
+  (let [[a1-f a1-c] (truth->fc single-a1)
+        [a2-f a2-c] (truth->fc single-a2)]
     [(name phase)
      (str block)
      (str trial)
@@ -414,7 +497,11 @@
     {:a1-left (lookup implication-left)
      :a1-right (lookup implication-right)
      :a2-left (lookup implication-a2-left)
-     :a2-right (lookup implication-a2-right)}))
+     :a2-right (lookup implication-a2-right)
+     :cross-a1-left (lookup implication-a1-left-cross)
+     :cross-a1-right (lookup implication-a1-right-cross)
+     :cross-a2-left (lookup implication-a2-left-cross)
+     :cross-a2-right (lookup implication-a2-right-cross)}))
 
 (defn context-stats
   [{:keys [stats]}]

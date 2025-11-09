@@ -51,11 +51,9 @@
   (let [candidates (filter #(and (nil? (:op-id %))
                                  (< (:time %) (:time event)))
                            history)
-        preferred (seq (filter :procedural? candidates))
-        pool (or preferred candidates)]
-    (if-let [latest (last pool)]
-      [latest]
-      [])))
+        proc (seq (filter :procedural? candidates))
+        non-proc (remove :procedural? candidates)]
+    (vec (concat proc non-proc))))
 
 (defn- induce-procedural [engine]
   (let [history (belief-history engine)]
