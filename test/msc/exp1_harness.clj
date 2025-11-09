@@ -17,6 +17,8 @@
 (def term-a1-right [:exp1 :A1-right])
 (def term-a2-left [:exp1 :A2-left])
 (def term-a2-right [:exp1 :A2-right])
+(def term-a1-single [:exp1 :A1])
+(def term-a2-single [:exp1 :A2])
 (def operation-terms {op-left-id [:op op-left-id]
                       op-right-id [:op op-right-id]})
 (def implication-left [[:seq term-a1-left (operation-terms op-left-id)]
@@ -27,7 +29,12 @@
                           goal-term op-left-id])
 (def implication-a2-right [[:seq term-a2-right (operation-terms op-right-id)]
                            goal-term op-right-id])
+(def implication-a1-single [[:seq term-a1-single (operation-terms op-left-id)]
+                            goal-term op-left-id])
+(def implication-a2-single [[:seq term-a2-single (operation-terms op-right-id)]
+                            goal-term op-right-id])
 (def default-truth {:f 0.5 :c 0.0})
+(def zero-truth {:f 0.0 :c 0.0})
 (def default-config {:motor-babble 0.2
                      :negative-c 0.9
                      :trace? false})
@@ -118,6 +125,10 @@
      {:term term-a2-right :procedural? false}]
     [{:term term-a1-right :procedural? true}
      {:term term-a2-left :procedural? false}]))
+(defn- single-stimulus [a1?]
+  [(if a1?
+     {:term term-a1-single :procedural? true}
+     {:term term-a2-single :procedural? true})])
 
 (defn- truth-or-default
   [engine key]
@@ -172,12 +183,15 @@
    :exp-a2-left (truth-or-default engine implication-a2-left)
    :exp-a2-right (truth-or-default engine implication-a2-right)})
 
-(defn run-trial
-  [ctx {:keys [phase block trial a1-left? provide-feedback?]}]
-  (let [expected (if a1-left? op-left-id op-right-id)
-        ctx (-> ctx
+(defn- single-measurement [engine]
+  {:single-a1 (get-in engine [:implications implication-a1-single :truth] zero-truth)
+   :single-a2 (get-in engine [:implications implication-a2-single :truth] zero-truth)})
+
+(defn- perform-trial
+  [ctx {:keys [phase block trial meta stimuli expected-op provide-feedback? measurement-fn]}]
+  (let [ctx (-> ctx
                 clear-active-terms
-                (inject-beliefs (stimuli-events a1-left?)))
+                (inject-beliefs stimuli))
         ctx (issue-goal ctx)
         [ctx decision] (attempt-decision ctx)
         [ctx decision] (if decision
@@ -185,21 +199,32 @@
                          (force-operation (increment-stat ctx :forced)
                                           (random-op ctx)))
         ctx (clear-active-terms ctx)
-        success? (= decision expected)
+        success? (= decision expected-op)
         ctx (if provide-feedback?
               (deliver-feedback ctx success?)
               ctx)
         ctx (advance-cycles ctx 4)
         ctx (advance-cycles ctx inter-trial-gap)
-        meas (measurement (:engine ctx))]
+        meas (measurement-fn (:engine ctx))]
     [ctx (merge {:phase phase
                  :block block
                  :trial trial
-                 :a1-left? a1-left?
                  :chosen-op decision
-                 :expected-op expected
+                 :expected-op expected-op
                  :correct? success?}
+                meta
                 meas)]))
+
+(defn run-trial
+  [ctx {:keys [phase block trial a1-left? provide-feedback?]}]
+  (perform-trial ctx {:phase phase
+                      :block block
+                      :trial trial
+                      :meta {:a1-left? a1-left?}
+                      :stimuli (stimuli-events a1-left?)
+                      :expected-op (if a1-left? op-left-id op-right-id)
+                      :provide-feedback? provide-feedback?
+                      :measurement-fn measurement}))
 
 (defn run-phase
   [ctx {:keys [name blocks provide-feedback?] :as phase}]
@@ -223,6 +248,43 @@
                                                    :trial trial
                                                    :a1-left? a1-left?
                                                    :provide-feedback? provide-feedback?})]
+                  (recur state'' (inc trial) (inc toggle) (conj acc' result)))))]
+        (let [[state-after block-data next-toggle] block-results]
+          (recur state-after (inc block) next-toggle (into acc block-data)))))))
+
+(defn run-single-trial
+  [ctx {:keys [phase block trial a1-trial? provide-feedback?]}]
+  (perform-trial ctx {:phase phase
+                      :block block
+                      :trial trial
+                      :meta {:stim (if a1-trial? :A1 :A2)}
+                      :stimuli (single-stimulus a1-trial?)
+                      :expected-op (if a1-trial? op-left-id op-right-id)
+                      :provide-feedback? provide-feedback?
+                      :measurement-fn single-measurement}))
+
+(defn run-exp09-phase
+  [ctx {:keys [name blocks provide-feedback?]}]
+  (loop [state ctx
+         block 1
+         toggle 0
+         acc []]
+    (if (> block blocks)
+      [state acc]
+      (let [block-results
+            (loop [state' state
+                   trial 1
+                   toggle toggle
+                   acc' []]
+              (if (> trial exp-block-trials)
+                [state' acc' toggle]
+                (let [a1-trial? (zero? (mod toggle 2))
+                      [state'' result] (run-single-trial state'
+                                                         {:phase name
+                                                          :block block
+                                                          :trial trial
+                                                          :a1-trial? a1-trial?
+                                                          :provide-feedback? provide-feedback?})]
                   (recur state'' (inc trial) (inc toggle) (conj acc' result)))))]
         (let [[state-after block-data next-toggle] block-results]
           (recur state-after (inc block) next-toggle (into acc block-data)))))))
@@ -253,6 +315,22 @@
 (defn run-exp1
   ([] (:results (run-exp1-context default-config)))
   ([config] (:results (run-exp1-context config))))
+
+(defn run-exp09-context
+  ([] (run-exp09-context default-config))
+  ([config]
+   (loop [ctx (initial-context config)
+          remaining phases
+          acc []]
+     (if (empty? remaining)
+       {:context ctx
+        :results acc}
+       (let [[ctx' results] (run-exp09-phase ctx (first remaining))]
+         (recur ctx' (rest remaining) (into acc results)))))))
+
+(defn run-exp09
+  ([] (:results (run-exp09-context default-config)))
+  ([config] (:results (run-exp09-context config))))
 
 (defn summarize-results
   [results]
@@ -294,6 +372,35 @@
   (let [results (:results (run-exp1-context))
         rows (map format-row results)
         lines (cons csv-header rows)]
+    (spit path
+          (str/join "\n" (map #(str/join "," %) lines)))))
+
+(def exp09-csv-header
+  ["phase" "block" "trial" "stim" "chosen_op" "correct"
+   "a1_f" "a1_c" "a2_f" "a2_c"])
+
+(defn- format-fc [truth]
+  [(format "%.6f" (:f truth))
+   (format "%.6f" (:c truth))])
+
+(defn format-exp09-row
+  [{:keys [phase block trial stim chosen-op correct?
+           single-a1 single-a2]}]
+  (let [[a1-f a1-c] (format-fc single-a1)
+        [a2-f a2-c] (format-fc single-a2)]
+    [(name phase)
+     (str block)
+     (str trial)
+     (name stim)
+     (str (or chosen-op 0))
+     (if correct? "1" "0")
+     a1-f a1-c a2-f a2-c]))
+
+(defn export-exp09-csv!
+  [path]
+  (let [results (:results (run-exp09-context))
+        rows (map format-exp09-row results)
+        lines (cons exp09-csv-header rows)]
     (spit path
           (str/join "\n" (map #(str/join "," %) lines)))))
 
