@@ -25,8 +25,7 @@
 (def default-truth {:f 0.5 :c 0.0})
 (def default-config {:motor-babble 0.2
                      :negative-c 0.9
-                     :prime-training? true
-                     :prime-trials 24})
+                     :trace? false})
 
 (defn initial-context
   ([]
@@ -164,9 +163,8 @@
         [ctx decision] (attempt-decision ctx)
         [ctx decision] (if decision
                          [ctx decision]
-                         (let [forced (random-op ctx)
-                               [ctx' op] (force-operation (increment-stat ctx :forced) forced)]
-                           [ctx' op]))
+                         (force-operation (increment-stat ctx :forced)
+                                          (random-op ctx)))
         ctx (clear-active-terms ctx)
         success? (= decision expected)
         ctx (if provide-feedback?
@@ -221,27 +219,6 @@
     :blocks exp1-testing-blocks
     :provide-feedback? false}])
 
-(defn prime-step [ctx a1-left?]
-  (let [expected (if a1-left? op-left-id op-right-id)
-        ctx (-> ctx
-                clear-active-terms
-                (inject-beliefs (stimuli-events a1-left?)))
-        [ctx _] (force-operation ctx expected)
-        ctx (clear-active-terms ctx)
-        ctx (deliver-feedback ctx true)]
-    (advance-cycles ctx inter-trial-gap)))
-
-(defn prime-training [ctx]
-  (let [n (get-in ctx [:config :prime-trials] 0)]
-    (loop [state ctx
-           remaining n
-           toggle 0]
-      (if (zero? remaining)
-        state
-        (recur (prime-step state (zero? (mod toggle 2)))
-               (dec remaining)
-               (inc toggle))))))
-
 (defn run-exp1-context
   ([] (run-exp1-context default-config))
   ([config]
@@ -251,13 +228,8 @@
      (if (empty? remaining)
        {:context ctx
         :results acc}
-       (let [phase (first remaining)
-             [ctx' results] (run-phase ctx phase)
-             ctx'' (if (and (= (:name phase) :training)
-                            (get-in ctx [:config :prime-training?] true))
-                     (prime-training ctx')
-                     ctx')]
-         (recur ctx'' (rest remaining) (into acc results)))))))
+       (let [[ctx' results] (run-phase ctx (first remaining))]
+         (recur ctx' (rest remaining) (into acc results)))))))
 
 (defn run-exp1
   ([] (:results (run-exp1-context default-config)))
