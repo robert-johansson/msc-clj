@@ -20,14 +20,27 @@
 
 (deftest activate-procedural-antecedent
   (let [engine {:params {:prop-th 0.5}
+                :concepts {[:a] {:belief-spikes [{:time 5}]}}
+                :time 5
                 :implications {[:proc :g 1] {:ante [:seq [:a] [:op 1]]
                                              :cons [:g]
                                              :op-id 1
                                              :expectation 0.8}}}
-        event {:term [:a] :stamp 7}
-        eng' (anticipation/activate engine [event])]
+        op-event {:term [:op 1] :time 6 :stamp 8}
+        eng' (anticipation/activate engine [op-event])]
     (is (= 1 (count (:anticipations eng'))))
     (is (= [:g] (:cons (first (:anticipations eng')))))))
+
+(deftest procedural-needs-op-event
+  (let [engine {:params {:prop-th 0.5}
+                :concepts {[:a] {:belief-spikes [{:time 5}]}}
+                :implications {[:proc :g 1] {:ante [:seq [:a] [:op 1]]
+                                             :cons [:g]
+                                             :op-id 1
+                                             :expectation 0.8}}}
+        a-event {:term [:a] :time 5}
+        eng' (anticipation/activate engine [a-event])]
+    (is (empty? (:anticipations eng')))))
 
 (deftest consume-clears-queue
   (let [[pending eng] (anticipation/consume {:anticipations [{:key 1}]})]

@@ -1,17 +1,27 @@
 (ns msc.anticipation
   "Tracks anticipated implications for assumption-of-failure updates.")
 
-(defn- ante-matches? [ante term]
-  (cond
-    (and (vector? ante) (= :seq (first ante)) (>= (count ante) 3))
-    (= (second ante) term)
-    :else
-    (= ante term)))
+(defn- recent-pre-spike?
+  [engine pre-term op-time]
+  (let [spike (last (get-in engine [:concepts pre-term :belief-spikes]))]
+    (boolean (and spike
+                  (< (:time spike) op-time)
+                  (<= (- op-time (:time spike)) 2)))))
 
 (defn- matching-links [engine event threshold]
-  (->> (vals (:implications engine))
-       (filter #(and (ante-matches? (:ante %) (:term event))
-                     (>= (:expectation %) threshold)))))
+  (let [term (:term event)
+        event-time (or (:time event) (:time engine))]
+    (->> (vals (:implications engine))
+         (filter
+          (fn [{:keys [ante expectation]}]
+            (and (>= expectation threshold)
+                 (if (and (vector? ante)
+                          (= :seq (first ante))
+                          (>= (count ante) 3))
+                   (let [[_ pre op-term] ante]
+                     (and (= op-term term)
+                          (recent-pre-spike? engine pre event-time)))
+                   (= ante term))))))))
 
 (defn- add-anticipations [engine matches stamp]
   (reduce
