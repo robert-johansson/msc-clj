@@ -70,20 +70,28 @@
    :exp-a1-b1-right (exp3-implication term-sample-a1 term-b1-right op-right-id)
    :exp-a2-b2-left (exp3-implication term-sample-a2 term-b2-left op-left-id)
    :exp-a2-b2-right (exp3-implication term-sample-a2 term-b2-right op-right-id)})
+(def exp3-simple-implications
+  {:simple-b1-left [[:seq term-b1-left (operation-terms op-left-id)] goal-term-exp3 op-left-id]
+   :simple-b1-right [[:seq term-b1-right (operation-terms op-right-id)] goal-term-exp3 op-right-id]
+   :simple-b2-left [[:seq term-b2-left (operation-terms op-left-id)] goal-term-exp3 op-left-id]
+   :simple-b2-right [[:seq term-b2-right (operation-terms op-right-id)] goal-term-exp3 op-right-id]})
 (def default-truth {:f 0.5 :c 0.0})
 (def zero-truth {:f 0.0 :c 0.0})
 (def default-config {:motor-babble 0.2
                      :negative-c 0.9
-                     :trace? false})
+                     :trace? false
+                     :engine-params {}})
 
 (defn initial-context
   ([]
    (initial-context default-config))
   ([config]
    (let [cfg (merge default-config config)
+         engine-params (merge {:motor-babble (:motor-babble cfg)}
+                              (:engine-params cfg))
          engine (engine/create {:ops {op-left-id {:term (operation-terms op-left-id)}
                                       op-right-id {:term (operation-terms op-right-id)}}
-                                :params {:motor-babble (:motor-babble cfg)}})
+                                :params engine-params})
          engine (if (:decision-trace? cfg)
                   (assoc engine :decision-trace [])
                   engine)]
@@ -143,7 +151,13 @@
   ([ctx]
    (issue-goal ctx goal-term))
   ([ctx goal-term*]
-   (first (run-step* ctx {:goals [{:term goal-term*}]}))))
+   (run-step* ctx {:goals [{:term goal-term*}]})))
+
+(defn- op-from-effects [effects]
+  (some (fn [effect]
+          (when (= :operation (:type effect))
+            (:op-id effect)))
+        effects))
 
 (defn- inject-belief
   [ctx belief]
@@ -168,27 +182,46 @@
   [(if a1?
      {:term term-a1-single :procedural? true}
      {:term term-a2-single :procedural? true})])
+(defn- cue-label [term]
+  (cond
+    (or (= term term-b1-left)
+        (= term term-b1-right)) 1
+    (or (= term term-b2-left)
+        (= term term-b2-right)) 2
+    :else 0))
+
 (defn- exp3-stimuli
-  [sample-a1? b1-left?]
-  (let [sample-term (if sample-a1? term-sample-a1 term-sample-a2)
-        left-term (if b1-left? term-b1-left term-b2-left)
-        right-term (if b1-left? term-b2-right term-b1-right)]
+  [sample op-id]
+  (let [sample-a1? (= sample 1)
+        sample-term (if sample-a1? term-sample-a1 term-sample-a2)
+        {:keys [target-left target-right other-left other-right]}
+        (if sample-a1?
+          {:target-left term-b1-left
+           :target-right term-b1-right
+           :other-left term-b2-left
+           :other-right term-b2-right}
+          {:target-left term-b2-left
+           :target-right term-b2-right
+           :other-left term-b1-left
+           :other-right term-b1-right})
+        left-target? (= op-id op-left-id)
+        left-term (if left-target? target-left other-left)
+        right-term (if left-target? other-right target-right)
+        target-term (if left-target? target-left target-right)]
     {:events [{:term sample-term :procedural? true}
-              {:term left-term :procedural? true}
-              {:term right-term :procedural? true}]
-     :sample (if sample-a1? 1 2)
-     :left (if b1-left? 1 2)
-     :right (if b1-left? 2 1)
+              {:term left-term :procedural? left-target?}
+              {:term right-term :procedural? (not left-target?)}]
+     :sample sample
+     :left (cue-label left-term)
+     :right (cue-label right-term)
      :sample-term sample-term
      :left-term left-term
-     :right-term right-term}))
+     :right-term right-term
+     :target-term target-term}))
 
 (defn- exp3-expected-op
-  [sample-a1? b1-left?]
-  (cond
-    sample-a1? (if b1-left? op-left-id op-right-id)
-    b1-left? op-right-id
-    :else op-left-id))
+  [left?]
+  (if left? op-left-id op-right-id))
 
 (defn- truth-or-default
   [engine key]
@@ -220,17 +253,24 @@
   (update-in ctx [:stats k] (fnil inc 0)))
 
 (defn- attempt-decision
-  [ctx goal-term*]
-  (loop [state ctx
-         attempts max-extra-attempts]
-    (let [[state' op] (wait-for-decision state max-wait-cycles)]
-      (if op
-        [(increment-stat state' :decisions) op]
-        (let [state'' (increment-stat state' :forced)
-              forced (random-op state'')]
-          (if (zero? attempts)
-            (force-operation state'' forced)
-            (recur (issue-goal state'' goal-term*) (dec attempts))))))))
+  ([ctx goal-term*]
+   (attempt-decision ctx goal-term* []))
+  ([ctx goal-term* initial-effects]
+   (if-let [op (op-from-effects initial-effects)]
+     [(increment-stat ctx :decisions) op]
+     (loop [state ctx
+            attempts max-extra-attempts]
+       (let [[state' op] (wait-for-decision state max-wait-cycles)]
+         (if op
+           [(increment-stat state' :decisions) op]
+           (let [state'' (increment-stat state' :forced)
+                 forced (random-op state'')
+                 [state''' effects] (issue-goal state'' goal-term*)
+                 op* (op-from-effects effects)]
+             (cond
+               op* [(increment-stat state''' :decisions) op*]
+               (zero? attempts) (force-operation state''' forced)
+               :else (recur state''' (dec attempts))))))))))
 
 (defn- deliver-feedback
   [ctx goal-term* success?]
@@ -249,14 +289,21 @@
    :exp-cross-a1-left (truth-or-default engine implication-a1-left-cross)
    :exp-cross-a1-right (truth-or-default engine implication-a1-right-cross)
    :exp-cross-a2-left (truth-or-default engine implication-a2-left-cross)
-   :exp-cross-a2-right (truth-or-default engine implication-a2-right-cross)})
+   :exp-cross-a2-right (truth-or-default engine implication-a2-right-cross)
+   :simple-a1 (truth-or-default engine implication-a1-single)
+   :simple-a2 (truth-or-default engine implication-a2-single)})
 
 (defn- exp3-measurement
   [engine]
-  (into {}
-        (map (fn [[k implication]]
-               [k (truth-or-default engine implication)]))
-        exp3-implications))
+  (merge
+   (into {}
+         (map (fn [[k implication]]
+                [k (truth-or-default engine implication)]))
+         exp3-implications)
+   (into {}
+         (map (fn [[k implication]]
+                [k (truth-or-default engine implication)]))
+         exp3-simple-implications)))
 
 (defn- single-measurement [engine]
   {:single-a1 (get-in engine [:implications implication-a1-single :truth] zero-truth)
@@ -272,12 +319,13 @@
         ctx (if sequence-term
               (inject-belief ctx {:term sequence-term :procedural? true})
               ctx)
-        ctx (issue-goal ctx goal-term*)
-        [ctx decision] (attempt-decision ctx goal-term*)
+        [ctx goal-effects] (issue-goal ctx goal-term*)
+        [ctx decision] (attempt-decision ctx goal-term* goal-effects)
         [ctx decision] (if decision
                          [ctx decision]
                          (force-operation (increment-stat ctx :forced)
                                           (random-op ctx)))
+        ctx (first (run-step* ctx {:beliefs [] :goals []}))
         ctx (clear-active-terms ctx)
         success? (= decision expected-op)
         ctx (if provide-feedback?
@@ -378,10 +426,10 @@
           (recur state-after (inc block) next-toggle (into acc block-data)))))))
 
 (defn run-exp3-trial
-  [ctx {:keys [phase block trial sample-a1? b1-left? provide-feedback?]}]
-  (let [{:keys [events sample left right sample-term left-term]} (exp3-stimuli sample-a1? b1-left?)
-        expected (exp3-expected-op sample-a1? b1-left?)
-        seq-term* (seq-term sample-term left-term)]
+  [ctx {:keys [phase block trial sample op-id provide-feedback?]}]
+  (let [{:keys [events sample left right sample-term target-term]} (exp3-stimuli sample op-id)
+        expected op-id
+        seq-term* (seq-term sample-term target-term)]
     (perform-trial ctx {:phase phase
                         :block block
                         :trial trial
@@ -395,33 +443,38 @@
                         :measurement-fn exp3-measurement
                         :goal-term goal-term-exp3})))
 
+(def exp3-combos
+  [{:sample 1 :op-id op-left-id}
+   {:sample 1 :op-id op-right-id}
+   {:sample 2 :op-id op-left-id}
+   {:sample 2 :op-id op-right-id}])
+
 (defn run-exp3-phase
   [ctx {:keys [name blocks provide-feedback?]}]
   (loop [state ctx
          block 1
-         toggle 0
+         idx 0
          acc []]
     (if (> block blocks)
       [state acc]
       (let [block-results
             (loop [state' state
                    trial 1
-                   toggle toggle
+                   idx idx
                    acc' []]
               (if (> trial exp-block-trials)
-                [state' acc' toggle]
-                (let [sample-a1? (zero? (mod toggle 2))
-                      b1-left? (random-bool state')
+                [state' acc' idx]
+                (let [combo (nth exp3-combos (mod idx (count exp3-combos)))
                       [state'' result] (run-exp3-trial state'
                                                        {:phase name
                                                         :block block
                                                         :trial trial
-                                                        :sample-a1? sample-a1?
-                                                        :b1-left? b1-left?
+                                                        :sample (:sample combo)
+                                                        :op-id (:op-id combo)
                                                         :provide-feedback? provide-feedback?})]
-                  (recur state'' (inc trial) (inc toggle) (conj acc' result)))))]
-        (let [[state-after block-data next-toggle] block-results]
-          (recur state-after (inc block) next-toggle (into acc block-data)))))))
+                  (recur state'' (inc trial) (inc idx) (conj acc' result)))))]
+        (let [[state-after block-data next-idx] block-results]
+          (recur state-after (inc block) next-idx (into acc block-data)))))))
 
 (def phases
   [{:name :baseline
@@ -502,14 +555,18 @@
 (defn run-exp3-context
   ([] (run-exp3-context default-config))
   ([config]
-   (loop [ctx (initial-context config)
+   (let [cfg (update config :engine-params #(merge {:prop-iters 0
+                                                    :prop-th 1.0
+                                                    :eps 0.01}
+                                                   %))]
+     (loop [ctx (initial-context cfg)
           remaining exp3-phases
           acc []]
-     (if (empty? remaining)
-       {:context ctx
-        :results acc}
-       (let [[ctx' results] (run-exp3-phase ctx (first remaining))]
-         (recur ctx' (rest remaining) (into acc results)))))))
+       (if (empty? remaining)
+         {:context ctx
+          :results acc}
+         (let [[ctx' results] (run-exp3-phase ctx (first remaining))]
+           (recur ctx' (rest remaining) (into acc results))))))))
 
 (defn run-exp3
   ([] (:results (run-exp3-context default-config)))
@@ -553,7 +610,9 @@
    "cross_a1_left_f" "cross_a1_left_c"
    "cross_a1_right_f" "cross_a1_right_c"
    "cross_a2_left_f" "cross_a2_left_c"
-   "cross_a2_right_f" "cross_a2_right_c"])
+   "cross_a2_right_f" "cross_a2_right_c"
+   "simple_a1_f" "simple_a1_c"
+   "simple_a2_f" "simple_a2_c"])
 
 (defn- truth->fc [truth]
   [(format "%.6f" (:f truth))
@@ -562,7 +621,8 @@
 (defn format-row
   [{:keys [phase block trial a1-left? chosen-op correct?
            exp-a1-left exp-a1-right exp-a2-left exp-a2-right
-           exp-cross-a1-left exp-cross-a1-right exp-cross-a2-left exp-cross-a2-right]}]
+           exp-cross-a1-left exp-cross-a1-right exp-cross-a2-left exp-cross-a2-right
+           simple-a1 simple-a2]}]
   (-> [(name phase)
        (str block)
        (str trial)
@@ -576,7 +636,9 @@
       (into (truth->fc exp-cross-a1-left))
       (into (truth->fc exp-cross-a1-right))
       (into (truth->fc exp-cross-a2-left))
-      (into (truth->fc exp-cross-a2-right))))
+      (into (truth->fc exp-cross-a2-right))
+      (into (truth->fc simple-a1))
+      (into (truth->fc simple-a2))))
 
 (defn export-csv!
   [path]
@@ -596,7 +658,11 @@
 
 (def exp3-csv-header
   ["phase" "block" "trial" "sample" "left" "right" "chosen_op" "correct"
-   "exp_a1_b1_left" "exp_a1_b1_right" "exp_a2_b2_left" "exp_a2_b2_right"])
+   "exp_a1_b1_left" "exp_a1_b1_right" "exp_a2_b2_left" "exp_a2_b2_right"
+   "simple_b1_left_f" "simple_b1_left_c"
+   "simple_b1_right_f" "simple_b1_right_c"
+   "simple_b2_left_f" "simple_b2_left_c"
+   "simple_b2_right_f" "simple_b2_right_c"])
 
 (defn- truth->expectation-str
   [truth]
@@ -604,7 +670,8 @@
 
 (defn format-exp3-row
   [{:keys [phase block trial sample left right chosen-op correct?
-           exp-a1-b1-left exp-a1-b1-right exp-a2-b2-left exp-a2-b2-right]}]
+           exp-a1-b1-left exp-a1-b1-right exp-a2-b2-left exp-a2-b2-right
+           simple-b1-left simple-b1-right simple-b2-left simple-b2-right]}]
   (let [base [(name phase)
               (str block)
               (str trial)
@@ -616,8 +683,14 @@
         exps [(truth->expectation-str exp-a1-b1-left)
               (truth->expectation-str exp-a1-b1-right)
               (truth->expectation-str exp-a2-b2-left)
-              (truth->expectation-str exp-a2-b2-right)]]
-    (into base exps)))
+              (truth->expectation-str exp-a2-b2-right)]
+        simples [(truth->fc simple-b1-left)
+                 (truth->fc simple-b1-right)
+                 (truth->fc simple-b2-left)
+                 (truth->fc simple-b2-right)]]
+    (-> base
+        (into exps)
+        (into (mapcat identity simples)))))
 
 (defn export-exp3-csv!
   [path]
@@ -684,3 +757,10 @@
   stats)
 (defn decision-trace [context]
   (get-in context [:engine :decision-trace]))
+(defn- cue-label [term]
+  (cond
+    (or (= term term-b1-left)
+        (= term term-b1-right)) 1
+    (or (= term term-b2-left)
+        (= term term-b2-right)) 2
+    :else 0))
