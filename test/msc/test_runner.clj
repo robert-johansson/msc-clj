@@ -9,6 +9,7 @@
     msc.memory-test
     msc.engine-test
     msc.goal-test
+    msc.simple-sequence-test
     msc.exp1-harness-test
     msc.event-test
     msc.mining-test
