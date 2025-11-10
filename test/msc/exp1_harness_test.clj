@@ -32,3 +32,10 @@
     (is (seq trace))
     (is (every? #(contains? % :time) trace))
     (is (every? #(contains? % :best) trace))))
+
+(deftest exp3-truths-present-after-simulation
+  (let [{:keys [context]} (harness/run-exp3-context {:motor-babble 0.0})
+        truths (harness/exp3-tracked-truths context)]
+    (doseq [k [:exp-a1-b1-left :exp-a1-b1-right :exp-a2-b2-left :exp-a2-b2-right]]
+      (is (contains? truths k))
+      (is (map? (get truths k))))))
